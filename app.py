@@ -1011,7 +1011,11 @@ elif page == "Manual Prediction":
                     if kmeans_model is not None and kmeans_scaler is not None and kmeans_risk_map is not None:
                         try:
                             tot_assets = residential + commercial + luxury + bank
-                            cust_scaled = kmeans_scaler.transform([[income, loan_amount, cibil, tot_assets]])
+                            cust_df = pd.DataFrame(
+                                [[income, loan_amount, cibil, tot_assets]],
+                                columns=["income_annum", "loan_amount", "cibil_score", "total_assets"]
+                            )
+                            cust_scaled = kmeans_scaler.transform(cust_df)
                             cluster_idx = kmeans_model.predict(cust_scaled)[0]
                             risk_seg = kmeans_risk_map.get(cluster_idx, "N/A")
                         except Exception:

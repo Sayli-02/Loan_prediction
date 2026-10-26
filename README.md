@@ -13,28 +13,66 @@ The project includes an interactive web app, an exploratory/model-training noteb
 - **Analytics** — visualize loan status, CIBIL score, education, employment, income, and loan amount patterns.
 - **Input validation** — reports missing required columns and missing or invalid values before prediction.
 
+## What I added (College ML Mini Project Extensions)
+
+This repository extends the original project with **3 core machine learning features** plus an optional risk segmentation module:
+
+### 1. 5-Model Benchmark & Comparison
+- Expanded the comparison from 3 to **5 classifiers**: Logistic Regression, Decision Tree, Random Forest, Support Vector Machine (`SVC(probability=True)`), and Gaussian Naive Bayes.
+- Distance-sensitive models (Logistic Regression and SVM) use `StandardScaler` inside a scikit-learn `Pipeline` to prevent data leakage, while tree-based models and Naive Bayes train on unscaled data.
+- Computed **5 evaluation metrics** across all models: **Accuracy, Precision, Recall, F1-Score, and ROC-AUC**.
+- Exported the results to `results/model_comparison.csv` and full ROC curve coordinates to `results/roc.json`.
+- Built a dedicated **"Model Comparison"** page in the Streamlit application featuring the performance table, an interactive Matplotlib ROC curve plot, and key takeaways.
+
+### 2. Random Forest Hyperparameter Tuning (`GridSearchCV`)
+- Performed a 3-fold cross-validation grid search (`n_estimators: [100, 200]`, `max_depth: [5, 10, None]`, `min_samples_split: [2, 5]`) targeting F1 optimization.
+- Addressed dataset class imbalance (Approved 62.2% vs Rejected 37.8%) by configuring `class_weight="balanced"`.
+- Displayed before-and-after performance metrics and best parameters on the Model Comparison dashboard.
+- Archived the original model to `loan_model_original.pkl` and implemented the strict persistence rule (retaining the original model since default test F1 = 0.9869 &ge; tuned test F1 = 0.9859).
+
+### 3. Explainable AI with SHAP (Local & Global Explanations)
+- Integrated `shap.TreeExplainer` on the **Manual Prediction** page to provide transparent, interpretable reasons behind each individual loan decision.
+- Handled SHAP library version differences across 2D/3D output shapes (`n_samples, n_features, n_classes`) to reliably extract class 1 (Approved) attribution vectors.
+- Displayed sorted horizontal contribution charts with intuitive green (pushing toward approval) and red (pushing toward rejection) color-coding and plain-English explanations.
+- Cached the explainer with `st.cache_resource` for real-time responsiveness.
+- Added a global **Feature Importance** chart on the Model Comparison page reflecting Gini impurity reduction across all trees.
+
+### 4. Optional Extension: K-Means Risk Segmentation
+- Fitted an unsupervised 3-cluster `KMeans` model on standardized numeric features: annual income, loan amount, CIBIL score, and total asset value.
+- Labeled segments into **Low Risk** (99.3% historical approval rate, mean CIBIL 757), **Medium Risk** (63.0% approval rate, mean CIBIL 597), and **High Risk** (24.0% approval rate, mean CIBIL 447).
+- Integrated real-time risk segment tags into Manual Prediction and added cluster distribution and approval rate charts to the Analytics page.
+
 ## Project structure
 
 ```text
 loan-eligibility-prediction/
-├── app.py                       # Streamlit web application
-├── data.ipynb                   # Exploratory data analysis and model training
-├── loan_approval_dataset.csv    # Historical loan application dataset
-├── loan_model.pkl               # Trained Random Forest classifier
-├── requirements.txt             # Python dependencies
+├── app.py                       # Extended Streamlit web application
+├── data.ipynb                   # EDA, 5-model comparison & GridSearchCV notebook
+├── loan_approval_dataset.csv    # Historical loan application dataset (4,269 records)
+├── loan_model.pkl               # Production Random Forest classifier
+├── loan_model_original.pkl      # Backup of original trained Random Forest
+├── requirements.txt             # Python dependencies (including shap)
 ├── .gitignore                   # Files to keep out of Git
-└── README.md                    # Project documentation
+├── README.md                    # Project documentation
+└── results/                     # Generated benchmark artifacts
+    ├── model_comparison.csv     # 5-model benchmark metrics table
+    ├── roc.json                 # ROC curve FPR/TPR points & AUC values
+    ├── tuning_info.json         # GridSearchCV parameters & before/after deltas
+    ├── kmeans_model.pkl         # Fitted 3-cluster KMeans model
+    ├── kmeans_scaler.pkl        # Fitted StandardScaler for clustering
+    └── kmeans_risk_map.pkl      # Cluster index to risk label mapping
 ```
 
 ## Tech stack
 
-- **Python** — application and model workflow
+- **Python 3.11** — application and model workflow
 - **Streamlit** — interactive web dashboard
-- **Pandas / NumPy** — data loading and preparation
-- **Matplotlib / Seaborn** — charts and exploratory analysis
-- **scikit-learn** — Logistic Regression, Decision Tree, Random Forest, and evaluation
-- **Joblib** — loading the saved model
-- **PyPDF2** — extracting text from structured PDF applications
+- **Pandas / NumPy** — data manipulation and feature engineering
+- **scikit-learn** — Logistic Regression, Decision Tree, Random Forest, SVM, Naive Bayes, Pipelines, GridSearchCV, and KMeans
+- **SHAP** — TreeExplainer for interpretable local feature attribution
+- **Matplotlib / Seaborn** — ROC curves, SHAP charts, probability and analytics plots
+- **Joblib** — model serialization and deserialization
+- **PyPDF2** — extracting applicant text from structured PDF files
 
 ## Dataset
 
@@ -119,10 +157,10 @@ If you replace the model, make sure the replacement expects the same 11 features
 - Do not use this model as the sole basis for approving or rejecting a real loan. A qualified reviewer and the lender's policies should be involved.
 - Only load `loan_model.pkl` from a trusted source. Pickle/joblib files can execute code when deserialized.
 
-## Author
+## Credits and Author
 
-**Yash Joshi**  
-GitHub: [@YASHU-JOSHI](https://github.com/YASHU-JOSHI)
+- **Original Author:** Yash Joshi ([github.com/YASHU-JOSHI/Loan_prediction](https://github.com/YASHU-JOSHI/Loan_prediction))
+- **College ML Mini Project Extension:** Added 5-model benchmark, GridSearchCV tuning, SHAP explainability, and K-Means risk segments.
 
 ---
 
