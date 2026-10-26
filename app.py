@@ -16,6 +16,7 @@ MODEL_PATH = "loan_model.pkl"
 DATASET_PATH = "loan_approval_dataset.csv"
 COMPARISON_PATH = os.path.join("results", "model_comparison.csv")
 ROC_PATH = os.path.join("results", "roc.json")
+TUNING_PATH = os.path.join("results", "tuning_info.json")
 
 FEATURES = [
     "no_of_dependents", "education", "self_employed", "income_annum",
@@ -439,10 +440,19 @@ def load_roc_data():
     return None
 
 
+@st.cache_data
+def load_tuning_info():
+    if os.path.exists(TUNING_PATH):
+        with open(TUNING_PATH, "r") as f:
+            return json.load(f)
+    return None
+
+
 model = load_model()
 df = load_data()
 comparison_df = load_comparison_data()
 roc_data = load_roc_data()
+tuning_info = load_tuning_info()
 
 
 # ---------------- Helper functions ----------------
@@ -809,6 +819,50 @@ elif page == "Model Comparison":
                 fig.tight_layout()
                 st.pyplot(fig)
                 plt.close(fig)
+
+        # Hyperparameter Tuning Details (Feature 2)
+        if tuning_info:
+            with card():
+                st.subheader("Hyperparameter Tuning (Random Forest Optimization)")
+                st.caption(
+                    "3-Fold GridSearchCV across tree depth, estimator count, and split criteria, "
+                    f"using balanced class weights (Approved/Rejected ratio: {tuning_info.get('ratio', 1.65)}:1)."
+                )
+
+                best_p = tuning_info.get("best_params", {})
+                p1, p2, p3, p4 = st.columns(4, gap="medium")
+                p1.metric("n_estimators", best_p.get("n_estimators", 200))
+                p2.metric("max_depth", str(best_p.get("max_depth", "None (Full)")))
+                p3.metric("min_samples_split", best_p.get("min_samples_split", 2))
+                p4.metric("Best CV F1-Score", f"{tuning_info.get('best_cv_f1', 0.9771):.4f}")
+
+                # Before & After Table
+                st.markdown("##### Before vs After Tuning Comparison")
+                rf_comparison = comparison_df[comparison_df["Model"].str.contains("Random Forest")].copy()
+                st.dataframe(rf_comparison, use_container_width=True, hide_index=True)
+
+                def_f1 = tuning_info.get("default_metrics", {}).get("F1-Score", 0.9869)
+                tun_f1 = tuning_info.get("tuned_metrics", {}).get("F1-Score", 0.9859)
+                def_prec = tuning_info.get("default_metrics", {}).get("Precision", 0.9832)
+                tun_prec = tuning_info.get("tuned_metrics", {}).get("Precision", 0.9850)
+
+                st.markdown(
+                    f"""
+                    <div class="note-box" style="margin-top: 10px;">
+                        <div class="note-title">Tuning Insights & Model Selection Decision</div>
+                        <div class="note-text">
+                            GridSearchCV with <code>class_weight='balanced'</code> optimized Precision from 
+                            <b>{def_prec:.4f}</b> to <b>{tun_prec:.4f}</b> and ROC-AUC to <b>0.9991</b> by reducing false positives 
+                            on the minority (Rejected) class. The test set F1-Score remained virtually identical 
+                            (<b>{tun_f1:.4f}</b> vs default <b>{def_f1:.4f}</b>).<br><br>
+                            <b>Persistence policy:</b> Per project requirements, the default model was retained in 
+                            <code>loan_model.pkl</code> because its test F1 was slightly higher ({def_f1:.4f} &ge; {tun_f1:.4f}), 
+                            and the original was safely archived as <code>loan_model_original.pkl</code>.
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
 
 # ---------------- MANUAL PREDICTION ----------------
@@ -1200,10 +1254,12 @@ elif page == "About":
         st.markdown(
             "<div>"
             + file_row(this_file, "Main Streamlit application with all pages, styling, validation and the prediction flow.", this_file)
-            + file_row(MODEL_PATH, "Pre-trained model, loaded once with Joblib and used for every prediction.", MODEL_PATH)
+            + file_row(MODEL_PATH, "Production trained model, loaded once with Joblib and used for every prediction.", MODEL_PATH)
+            + file_row("loan_model_original.pkl", "Archived backup of original Random Forest model before hyperparameter tuning.", "loan_model_original.pkl")
             + file_row(DATASET_PATH, "Historical loan records used by Overview, Dataset Preview and Analytics.", DATASET_PATH)
             + file_row(COMPARISON_PATH, "Benchmark results table comparing classification models across 5 metrics.", COMPARISON_PATH)
             + file_row(ROC_PATH, "ROC curve coordinates and AUC scores saved as JSON for the Model Comparison dashboard.", ROC_PATH)
+            + file_row(TUNING_PATH, "Hyperparameter tuning grid search configuration and best parameter metrics.", TUNING_PATH)
             + file_row("loan_prediction_results.csv", "Downloaded from Bulk Prediction. It contains the uploaded data plus Prediction and Approval Probability.")
             + "</div>",
             unsafe_allow_html=True,

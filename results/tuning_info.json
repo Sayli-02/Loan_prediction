@@ -1,0 +1,26 @@
+{
+  "best_params": {
+    "max_depth": null,
+    "min_samples_split": 2,
+    "n_estimators": 200
+  },
+  "best_cv_f1": 0.9771,
+  "ratio": 1.65,
+  "class_weights": "balanced",
+  "default_metrics": {
+    "Model": "Random Forest (default)",
+    "Accuracy": 0.9836,
+    "Precision": 0.9832,
+    "Recall": 0.9906,
+    "F1-Score": 0.9869,
+    "ROC-AUC": 0.9989
+  },
+  "tuned_metrics": {
+    "Model": "Random Forest (tuned)",
+    "Accuracy": 0.9824,
+    "Precision": 0.985,
+    "Recall": 0.9868,
+    "F1-Score": 0.9859,
+    "ROC-AUC": 0.9991
+  }
+}
