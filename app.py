@@ -14,6 +14,8 @@ st.set_page_config(page_title="Loan Eligibility Predictor", layout="wide")
 
 MODEL_PATH = "loan_model.pkl"
 DATASET_PATH = "loan_approval_dataset.csv"
+COMPARISON_PATH = os.path.join("results", "model_comparison.csv")
+ROC_PATH = os.path.join("results", "roc.json")
 
 FEATURES = [
     "no_of_dependents", "education", "self_employed", "income_annum",
@@ -36,7 +38,7 @@ FEATURE_INFO = {
     "bank_asset_value": ("Bank Assets", "Number", "Value of bank assets"),
 }
 
-PAGES = ["Overview", "Dataset Preview", "Manual Prediction", "Bulk Prediction", "Analytics", "About"]
+PAGES = ["Overview", "Dataset Preview", "Model Comparison", "Manual Prediction", "Bulk Prediction", "Analytics", "About"]
 
 # chart colours
 NAVY = "#0f2a47"
@@ -422,8 +424,25 @@ def load_data():
     return None
 
 
+@st.cache_data
+def load_comparison_data():
+    if os.path.exists(COMPARISON_PATH):
+        return pd.read_csv(COMPARISON_PATH)
+    return None
+
+
+@st.cache_data
+def load_roc_data():
+    if os.path.exists(ROC_PATH):
+        with open(ROC_PATH, "r") as f:
+            return json.load(f)
+    return None
+
+
 model = load_model()
 df = load_data()
+comparison_df = load_comparison_data()
+roc_data = load_roc_data()
 
 
 # ---------------- Helper functions ----------------
@@ -661,6 +680,7 @@ if page == "Overview":
             st.markdown(
                 """
                 - **Dataset Preview:** view the records, column details and statistics.
+                - **Model Comparison:** benchmark 5 classifiers, metrics table and ROC curves.
                 - **Manual Prediction:** assess a single loan application.
                 - **Bulk Prediction:** upload a CSV or PDF and predict many applicants at once.
                 - **Analytics:** review trends and relationships in the loan data.
@@ -708,6 +728,87 @@ elif page == "Dataset Preview":
         with card():
             st.subheader("Statistical summary")
             st.dataframe(df.describe().T, use_container_width=True)
+
+
+# ---------------- MODEL COMPARISON ----------------
+elif page == "Model Comparison":
+    page_header("Model Comparison", "Benchmark multiple machine learning classifiers and compare evaluation metrics and ROC curves.")
+
+    if comparison_df is None:
+        st.warning("Model comparison results not found. Please run the model comparison section in data.ipynb to generate results/model_comparison.csv.")
+    else:
+        # Determine best model by F1-Score
+        best_row = comparison_df.sort_values(by="F1-Score", ascending=False).iloc[0]
+        best_name = best_row["Model"]
+        best_f1 = best_row["F1-Score"]
+        best_acc = best_row["Accuracy"]
+        best_auc = best_row["ROC-AUC"]
+
+        c1, c2, c3, c4 = st.columns(4, gap="medium")
+        c1.metric("Models Evaluated", len(comparison_df))
+        c2.metric("Best Model (by F1)", best_name.replace(" (tuned)", "").replace(" (default)", ""))
+        c3.metric("Top F1-Score", f"{best_f1:.4f}")
+        c4.metric("Top ROC-AUC", f"{best_auc:.4f}")
+
+        st.write("")
+
+        with card():
+            st.subheader("Classification Performance Metrics")
+            st.caption("All models evaluated on the held-out 20% test set (854 records) with identical random seed (42) and stratified split.")
+            st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+
+            # One-line takeaway
+            st.markdown(
+                f"""
+                <div class="note-box" style="margin-top: 14px;">
+                    <div class="note-title">Model Comparison Takeaway</div>
+                    <div class="note-text">
+                        <b>{best_name}</b> achieved the highest F1-Score of <b>{best_f1:.4f}</b> (ROC-AUC: <b>{best_auc:.4f}</b>),
+                        demonstrating the best balance between Precision and Recall for loan approval decisions.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        # ROC Curves
+        if roc_data:
+            with card():
+                st.subheader("Receiver Operating Characteristic (ROC) Curves")
+                st.caption("ROC curves illustrate the diagnostic ability of each binary classifier across discrimination thresholds.")
+
+                fig, ax = plt.subplots(figsize=(7, 4.2))
+                palette = {
+                    "Logistic Regression": BLUE,
+                    "Decision Tree": TEAL,
+                    "Random Forest": GREEN,
+                    "Random Forest (default)": GREEN,
+                    "Random Forest (tuned)": "#7c3aed",
+                    "Support Vector Machine": NAVY,
+                    "Gaussian Naive Bayes": "#ea580c",
+                }
+
+                for name, data in roc_data.items():
+                    color = palette.get(name, BLUE)
+                    auc_val = data.get("auc", 0.0)
+                    ax.plot(
+                        data["fpr"],
+                        data["tpr"],
+                        label=f"{name} (AUC = {auc_val:.4f})",
+                        linewidth=2.2,
+                        color=color,
+                    )
+
+                ax.plot([0, 1], [0, 1], linestyle="--", color="#94a3b8", label="Random Chance (AUC = 0.5000)")
+                ax.set_xlim([0.0, 1.0])
+                ax.set_ylim([0.0, 1.03])
+                ax.set_xlabel("False Positive Rate (1 - Specificity)", fontsize=10, color="#475569")
+                ax.set_ylabel("True Positive Rate (Sensitivity)", fontsize=10, color="#475569")
+                ax.legend(loc="lower right", frameon=True, facecolor="white", edgecolor="#dde5ef", fontsize=9)
+                style_axes(ax)
+                fig.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
 
 
 # ---------------- MANUAL PREDICTION ----------------
@@ -1101,6 +1202,8 @@ elif page == "About":
             + file_row(this_file, "Main Streamlit application with all pages, styling, validation and the prediction flow.", this_file)
             + file_row(MODEL_PATH, "Pre-trained model, loaded once with Joblib and used for every prediction.", MODEL_PATH)
             + file_row(DATASET_PATH, "Historical loan records used by Overview, Dataset Preview and Analytics.", DATASET_PATH)
+            + file_row(COMPARISON_PATH, "Benchmark results table comparing classification models across 5 metrics.", COMPARISON_PATH)
+            + file_row(ROC_PATH, "ROC curve coordinates and AUC scores saved as JSON for the Model Comparison dashboard.", ROC_PATH)
             + file_row("loan_prediction_results.csv", "Downloaded from Bulk Prediction. It contains the uploaded data plus Prediction and Approval Probability.")
             + "</div>",
             unsafe_allow_html=True,
