@@ -5,8 +5,10 @@ from contextlib import contextmanager
 
 import joblib
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import PyPDF2
+import shap
 import streamlit as st
 
 # ---------------- Page setup ----------------
@@ -448,6 +450,17 @@ def load_tuning_info():
     return None
 
 
+@st.cache_resource
+def get_shap_explainer(_model):
+    """Cache the SHAP TreeExplainer for fast manual prediction explanations."""
+    if _model is not None:
+        try:
+            return shap.TreeExplainer(_model)
+        except Exception:
+            return None
+    return None
+
+
 model = load_model()
 df = load_data()
 comparison_df = load_comparison_data()
@@ -864,6 +877,34 @@ elif page == "Model Comparison":
                     unsafe_allow_html=True,
                 )
 
+        # Global Feature Importance (Feature 3 extension)
+        if model is not None and hasattr(model, "feature_importances_"):
+            with card():
+                st.subheader("Global Feature Importance (Random Forest)")
+                st.caption("Gini feature importance ranking showing the relative contribution of each feature across all trees.")
+
+                fi_df = pd.DataFrame({
+                    "Feature": [FEATURE_INFO[f][0] for f in FEATURES],
+                    "Importance (%)": model.feature_importances_ * 100
+                }).sort_values(by="Importance (%)", ascending=True)
+
+                fig, ax = plt.subplots(figsize=(7, 4.3))
+                bars = ax.barh(fi_df["Feature"], fi_df["Importance (%)"], color=BLUE, height=0.6)
+                for bar, val in zip(bars, fi_df["Importance (%)"]):
+                    ax.text(
+                        bar.get_width() + 0.6,
+                        bar.get_y() + bar.get_height() / 2,
+                        f"{val:.1f}%",
+                        ha="left",
+                        va="center",
+                        fontsize=8.5,
+                        fontweight="bold",
+                        color="#334155"
+                    )
+                ax.set_xlim([0, max(fi_df["Importance (%)"]) + 8])
+                ax.set_xlabel("Relative Importance (%)", fontsize=9.5, color="#475569")
+                show(fig, ax, "Random Forest Feature Importances")
+
 
 # ---------------- MANUAL PREDICTION ----------------
 elif page == "Manual Prediction":
@@ -964,6 +1005,81 @@ elif page == "Manual Prediction":
                         fig, ax = plt.subplots(figsize=(5.5, 3.3))
                         ax.barh(labels[::-1], [v / 100000 for v in values][::-1], color=BLUE, height=0.55)
                         show(fig, ax, "Applicant financial profile", xlabel="Value in 100,000 units")
+
+                # ---------------- SHAP Explanation (Feature 3) ----------------
+                with card():
+                    st.subheader("Decision Explanation (SHAP)")
+                    st.caption("SHAP (SHapley Additive exPlanations) quantifies the exact contribution of each factor to this applicant's approval or rejection.")
+
+                    try:
+                        explainer = get_shap_explainer(model)
+                        if explainer is not None:
+                            shap_raw = explainer.shap_values(row)
+
+                            # Handle SHAP version differences for output shape:
+                            # List of arrays, 2D array, or 3D array (n_samples, n_features, n_classes).
+                            # Always extract values for class 1 (Approved), sample 0, into a 1D vector.
+                            if isinstance(shap_raw, list):
+                                c1_vals = np.array(shap_raw[1])[0] if len(shap_raw) > 1 else np.array(shap_raw[0])[0]
+                            elif isinstance(shap_raw, np.ndarray):
+                                if shap_raw.ndim == 3:
+                                    appr_idx = approval_index()
+                                    c1_vals = shap_raw[0, :, appr_idx]
+                                elif shap_raw.ndim == 2:
+                                    c1_vals = shap_raw[0]
+                                else:
+                                    c1_vals = shap_raw.flatten()
+                            else:
+                                c1_vals = np.array(shap_raw).flatten()
+
+                            feat_display_names = [FEATURE_INFO[f][0] for f in FEATURES]
+                            shap_df = pd.DataFrame({
+                                "Feature": feat_display_names,
+                                "Value": c1_vals
+                            }).sort_values(by="Value", ascending=True)
+
+                            bar_colors = [GREEN if val >= 0 else RED for val in shap_df["Value"]]
+
+                            fig, ax = plt.subplots(figsize=(7, 4.5))
+                            bars = ax.barh(shap_df["Feature"], shap_df["Value"], color=bar_colors, height=0.6)
+                            ax.axvline(0, color="#94a3b8", linestyle="--", linewidth=1.2)
+
+                            for bar, val in zip(bars, shap_df["Value"]):
+                                offset = 0.005 if val >= 0 else -0.005
+                                ha = "left" if val >= 0 else "right"
+                                ax.text(
+                                    bar.get_width() + offset,
+                                    bar.get_y() + bar.get_height() / 2,
+                                    f"{val:+.3f}",
+                                    ha=ha,
+                                    va="center",
+                                    fontsize=8.5,
+                                    fontweight="bold",
+                                    color="#1e293b",
+                                )
+
+                            max_abs = max(float(abs(shap_df["Value"]).max()), 0.1)
+                            ax.set_xlim([-max_abs * 1.35, max_abs * 1.35])
+                            ax.set_xlabel("SHAP Impact on Approval (Positive = Pushes toward Approval, Negative = Toward Rejection)", fontsize=9.5, color="#475569")
+                            show(fig, ax, "Individual Feature Contributions (SHAP Values)")
+
+                            st.markdown(
+                                """
+                                <div class="note-box" style="margin-top: 10px;">
+                                    <div class="note-title">How to Read This Explanation</div>
+                                    <div class="note-text">
+                                        &bull; <b>Green bars (positive values):</b> Factors that increased this applicant's chance of loan approval.<br>
+                                        &bull; <b>Red bars (negative values):</b> Factors that pushed the model toward rejecting this application.<br>
+                                        &bull; <b>Bar length:</b> Indicates how strongly the feature influenced this specific decision.
+                                    </div>
+                                </div>
+                                """,
+                                unsafe_allow_html=True,
+                            )
+                        else:
+                            st.info("SHAP explainer could not be initialized for the current model.")
+                    except Exception as shap_err:
+                        st.warning(f"Could not compute SHAP explanations: {shap_err}")
 
             except Exception as e:
                 st.error(f"Prediction error: {e}")
@@ -1182,11 +1298,11 @@ elif page == "About":
         "grid-3",
         [
             ("Manual prediction", "Enter the 11 applicant details and get an approved or rejected result with approval and rejection probability."),
-            ("Bulk prediction", "Upload a CSV, Excel or JSON file with many applicants, or a text based PDF with one applicant, and download the results as a CSV."),
+            ("SHAP explanation", "Feature attribution breakdown explaining why an applicant was approved or rejected using SHAP values."),
+            ("Model comparison", "Multi-model benchmark (LR, DT, RF, SVM, NB) comparing Accuracy, Precision, Recall, F1, and ROC curves."),
+            ("Bulk prediction", "Upload a CSV, Excel or JSON file with many applicants, or a text based PDF with one applicant, and download results."),
             ("Input validation", "Missing columns and missing or invalid values are reported before the model is run."),
-            ("Dataset preview", "View the records, column information (type, missing and unique values) and a statistical summary."),
             ("Analytics", "Charts for loan status, CIBIL score, education, employment, income against loan amount and average loan amount."),
-            ("Overview", "Summary counts of applications, approvals, rejections and the historical approval rate."),
         ],
         '<div class="feat-card"><div class="feat-title">{0}</div><div class="feat-text">{1}</div></div>',
     )
@@ -1213,12 +1329,12 @@ elif page == "About":
         [
             ("Python", "Core programming language of the project"),
             ("Streamlit", "Builds the dashboard, pages and input forms"),
+            ("scikit-learn", "Classification pipelines, GridSearchCV and metrics"),
+            ("SHAP", "TreeExplainer for interpretable model decision explanations"),
             ("Pandas", "Reads CSV, Excel and JSON files and prepares the model input"),
-            ("Joblib", "Loads the saved model from loan_model.pkl"),
-            ("Matplotlib", "Draws the probability and analytics charts"),
-            ("PyPDF2", "Extracts text from uploaded PDF files"),
-            ("Regex", "Finds the column values inside the PDF text"),
-            ("CSS", "Custom styling of the sidebar, cards and pages"),
+            ("Joblib", "Loads and persists trained models from loan_model.pkl"),
+            ("Matplotlib", "Draws probability, ROC, SHAP and analytics charts"),
+            ("PyPDF2", "Extracts text from uploaded PDF applications"),
         ],
         '<div class="tech-card"><div class="tech-name">{0}</div><div class="tech-role">{1}</div></div>',
     )

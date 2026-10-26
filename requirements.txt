@@ -10,3 +10,4 @@ openpyxl
 xlrd
 nbformat
 jupyter
+shap
