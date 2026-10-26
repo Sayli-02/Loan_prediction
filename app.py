@@ -19,6 +19,9 @@ DATASET_PATH = "loan_approval_dataset.csv"
 COMPARISON_PATH = os.path.join("results", "model_comparison.csv")
 ROC_PATH = os.path.join("results", "roc.json")
 TUNING_PATH = os.path.join("results", "tuning_info.json")
+KMEANS_MODEL_PATH = os.path.join("results", "kmeans_model.pkl")
+KMEANS_SCALER_PATH = os.path.join("results", "kmeans_scaler.pkl")
+KMEANS_MAP_PATH = os.path.join("results", "kmeans_risk_map.pkl")
 
 FEATURES = [
     "no_of_dependents", "education", "self_employed", "income_annum",
@@ -466,6 +469,23 @@ df = load_data()
 comparison_df = load_comparison_data()
 roc_data = load_roc_data()
 tuning_info = load_tuning_info()
+
+
+@st.cache_resource
+def load_kmeans():
+    """Load K-Means clustering artifacts for risk segmentation."""
+    if os.path.exists(KMEANS_MODEL_PATH) and os.path.exists(KMEANS_SCALER_PATH) and os.path.exists(KMEANS_MAP_PATH):
+        try:
+            km = joblib.load(KMEANS_MODEL_PATH)
+            sc = joblib.load(KMEANS_SCALER_PATH)
+            rm = joblib.load(KMEANS_MAP_PATH)
+            return km, sc, rm
+        except Exception:
+            return None, None, None
+    return None, None, None
+
+
+kmeans_model, kmeans_scaler, kmeans_risk_map = load_kmeans()
 
 
 # ---------------- Helper functions ----------------
@@ -986,10 +1006,22 @@ elif page == "Manual Prediction":
                             unsafe_allow_html=True,
                         )
 
-                    m1, m2, m3 = st.columns(3, gap="medium")
+                    # Calculate K-Means Risk Segment (Feature 4)
+                    risk_seg = "N/A"
+                    if kmeans_model is not None and kmeans_scaler is not None and kmeans_risk_map is not None:
+                        try:
+                            tot_assets = residential + commercial + luxury + bank
+                            cust_scaled = kmeans_scaler.transform([[income, loan_amount, cibil, tot_assets]])
+                            cluster_idx = kmeans_model.predict(cust_scaled)[0]
+                            risk_seg = kmeans_risk_map.get(cluster_idx, "N/A")
+                        except Exception:
+                            risk_seg = "N/A"
+
+                    m1, m2, m3, m4 = st.columns(4, gap="medium")
                     m1.metric("Approval Probability", f"{approval:.1f}%")
                     m2.metric("Rejection Probability", f"{rejection:.1f}%")
                     m3.metric("Loan to Income Ratio", f"{loan_amount / income:.2f}" if income else "N/A")
+                    m4.metric("Risk Segment (K-Means)", risk_seg)
 
                 with card():
                     st.subheader("Assessment analysis")
@@ -1200,6 +1232,58 @@ elif page == "Analytics":
                 colors = [GREEN if str(s).strip().lower() == "approved" else RED for s in avg.index]
                 bar_chart(avg.index.astype(str), avg.values, "Average loan amount by status",
                           colors, "Average loan amount")
+
+        # Risk Segmentation Analysis (K-Means Clustering)
+        if kmeans_model is not None and kmeans_scaler is not None and kmeans_risk_map is not None:
+            with card():
+                st.subheader("Applicant Risk Segmentation (K-Means Clustering)")
+                st.caption("Unsupervised 3-cluster segmentation using scaled income, loan amount, CIBIL score, and total assets.")
+
+                # Calculate cluster segments on full dataset
+                df_seg = df.copy()
+                df_seg["total_assets"] = (
+                    df_seg["residential_assets_value"] +
+                    df_seg["commercial_assets_value"] +
+                    df_seg["luxury_assets_value"] +
+                    df_seg["bank_asset_value"]
+                )
+                feat_mat = df_seg[["income_annum", "loan_amount", "cibil_score", "total_assets"]]
+                scaled_mat = kmeans_scaler.transform(feat_mat)
+                clusters = kmeans_model.predict(scaled_mat)
+                df_seg["risk_segment"] = [kmeans_risk_map.get(c, "N/A") for c in clusters]
+
+                g7, g8 = st.columns(2, gap="large")
+
+                with g7:
+                    seg_order = ["Low Risk", "Medium Risk", "High Risk"]
+                    seg_counts = df_seg["risk_segment"].value_counts().reindex(seg_order)
+                    bar_chart(
+                        seg_order,
+                        seg_counts.values,
+                        "Applicant Count by Risk Segment",
+                        [GREEN, BLUE, RED],
+                        "Applicants"
+                    )
+
+                with g8:
+                    seg_rates = df_seg.groupby("risk_segment")["loan_status"].apply(
+                        lambda s: (s.astype(str).str.lower() == "approved").mean() * 100
+                    ).reindex(seg_order)
+                    fig, ax = plt.subplots(figsize=(5.5, 3.3))
+                    bars = ax.bar(seg_order, seg_rates.values, color=[GREEN, BLUE, RED], width=0.5)
+                    for bar, v in zip(bars, seg_rates.values):
+                        ax.text(
+                            bar.get_x() + bar.get_width() / 2,
+                            bar.get_height() + 1,
+                            f"{v:.1f}%",
+                            ha="center",
+                            va="bottom",
+                            fontsize=9,
+                            fontweight="bold",
+                            color="#334155"
+                        )
+                    ax.set_ylim([0, 110])
+                    show(fig, ax, "Historical Approval Rate by Risk Segment", ylabel="Approval Rate (%)")
 
 
 # ---------------- ABOUT ----------------
